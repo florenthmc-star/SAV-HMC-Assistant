@@ -15,9 +15,9 @@
   <DefaultLocale>fr-FR</DefaultLocale>
   <DisplayName DefaultValue="SAV HMC Assistant"/>
   <Description DefaultValue="Analyse les mails SAV : résumé, alerte urgence, brouillon de réponse selon les modèles HMC."/>
-  <IconUrl DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/assets/icon-64.png"/>
-  <HighResolutionIconUrl DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/assets/icon-128.png"/>
-  <SupportUrl DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/taskpane.html"/>
+  <IconUrl DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/assets/icon-64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/assets/icon-128.png"/>
+  <SupportUrl DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/taskpane.html"/>
   <AppDomains>
     <AppDomain>https://script.google.com</AppDomain>
     <AppDomain>https://script.googleusercontent.com</AppDomain>
@@ -33,7 +33,7 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/taskpane.html"/>
+        <SourceLocation DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/taskpane.html"/>
         <RequestedHeight>250</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -83,13 +83,13 @@
       </Hosts>
       <Resources>
         <bt:Images>
-          <bt:Image id="Icon.16" DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/assets/icon-16.png"/>
-          <bt:Image id="Icon.32" DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/assets/icon-32.png"/>
-          <bt:Image id="Icon.80" DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/assets/icon-80.png"/>
+          <bt:Image id="Icon.16" DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/assets/icon-16.png"/>
+          <bt:Image id="Icon.32" DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/assets/icon-32.png"/>
+          <bt:Image id="Icon.80" DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/assets/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="Commands.Url" DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/commands.html"/>
-          <bt:Url id="Taskpane.Url" DefaultValue="https://VOTRE-COMPTE.github.io/sav-hmc-outlook/taskpane.html"/>
+          <bt:Url id="Commands.Url" DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/commands.html"/>
+          <bt:Url id="Taskpane.Url" DefaultValue="https://florenthmc-star.github.io/sav-hmc-outlook/taskpane.html"/>
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="Group.Label" DefaultValue="SAV HMC"/>
