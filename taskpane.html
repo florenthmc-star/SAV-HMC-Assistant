@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SAV HMC Assistant</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  :root{
+    --vert:#b5c400; --vert-fonce:#5d6600; --vert-clair:#f4f7d9;
+    --texte:#1f2328; --gris:#5f6670; --bord:#dfe3e8; --fond:#f6f7f9; --carte:#ffffff;
+    --rouge:#c62828; --rouge-clair:#fdecea; --jaune:#fff6d6; --jaune-bord:#f0d77a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 "Segoe UI",system-ui,-apple-system,sans-serif;color:var(--texte);background:var(--fond)}
+  header{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--carte);border-bottom:3px solid var(--vert)}
+  header h1{font-size:15px;margin:0;font-weight:700}
+  header h1 span{color:var(--vert-fonce)}
+  .icon-btn{border:0;background:none;cursor:pointer;font-size:18px;padding:4px 6px;border-radius:6px;color:var(--gris)}
+  .icon-btn:hover{background:var(--fond)}
+  main{padding:12px}
+  .card{background:var(--carte);border:1px solid var(--bord);border-radius:10px;padding:12px;margin-bottom:10px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--gris);margin:0 0 6px}
+  .muted{color:var(--gris);font-size:12.5px}
+  .subject{font-weight:600;word-break:break-word}
+  label{display:block;font-size:12.5px;color:var(--gris);margin:8px 0 4px}
+  input[type=text],input[type=password],textarea{width:100%;border:1px solid var(--bord);border-radius:8px;padding:8px;font:inherit;background:#fff;color:var(--texte)}
+  textarea{resize:vertical}
+  .check{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--texte);margin:6px 0}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:8px;padding:10px 14px;font:600 14px "Segoe UI",sans-serif;cursor:pointer}
+  .btn-main{background:var(--vert);color:#1f2328;width:100%}
+  .btn-main:hover{filter:brightness(.95)}
+  .btn-main:disabled{opacity:.6;cursor:wait}
+  .btn-sec{background:#fff;border:1px solid var(--bord);color:var(--texte)}
+  .btn-sec:hover{background:var(--fond)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .row .btn{flex:1 1 auto}
+  .alert{border-radius:10px;padding:10px 12px;margin-bottom:10px;font-weight:600}
+  .alert-red{background:var(--rouge-clair);color:var(--rouge);border:1px solid #f3b4ae}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{background:var(--vert-clair);color:var(--vert-fonce);border-radius:999px;padding:3px 10px;font-size:12.5px;font-weight:600}
+  .chip.grey{background:var(--fond);color:var(--gris)}
+  ul{margin:4px 0 0;padding-left:18px}
+  li{margin:2px 0}
+  .attention{background:var(--jaune);border-color:var(--jaune-bord)}
+  .fiche td{padding:3px 6px 3px 0;vertical-align:top;font-size:13px}
+  .fiche td:first-child{color:var(--gris);white-space:nowrap}
+  .loader{display:flex;gap:10px;align-items:center;padding:16px;justify-content:center;color:var(--gris)}
+  .spin{width:18px;height:18px;border:3px solid var(--bord);border-top-color:var(--vert);border-radius:50%;animation:s 0.8s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .err{background:var(--rouge-clair);color:var(--rouge);border-radius:8px;padding:10px;font-size:13px}
+  .ok{color:var(--vert-fonce);font-weight:600}
+  .hidden{display:none!important}
+  footer{padding:4px 14px 14px;color:var(--gris);font-size:11px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>SAV HMC <span>Assistant</span></h1>
+  <button class="icon-btn" id="btnSettings" title="Réglages">⚙︎</button>
+</header>
+
+<main>
+  <!-- ========== RÉGLAGES ========== -->
+  <section id="viewSettings" class="hidden">
+    <div class="card">
+      <h2>Réglages</h2>
+      <p class="muted">À faire une seule fois. Ces informations te sont données par Florent.</p>
+      <label for="setUrl">Adresse de l'agent (URL Apps Script)</label>
+      <input type="text" id="setUrl" placeholder="https://script.google.com/macros/s/.../exec">
+      <label for="setCode">Code d'accès</label>
+      <input type="password" id="setCode" placeholder="••••••">
+      <div class="row">
+        <button class="btn btn-sec" id="btnTest">Tester la connexion</button>
+        <button class="btn btn-main" id="btnSave" style="width:auto">Enregistrer</button>
+      </div>
+      <p id="setMsg" class="muted"></p>
+    </div>
+  </section>
+
+  <!-- ========== ÉCRAN PRINCIPAL ========== -->
+  <section id="viewMain" class="hidden">
+    <div class="card">
+      <h2>Mail sélectionné</h2>
+      <div class="subject" id="mailSubject">—</div>
+      <div class="muted" id="mailFrom"></div>
+      <div class="muted" id="mailPj"></div>
+    </div>
+
+    <div id="localUrgence" class="alert alert-red hidden"></div>
+
+    <div class="card">
+      <label class="check"><input type="checkbox" id="optPhotos" checked> Analyser aussi les photos jointes</label>
+      <label for="consigne">Consigne pour l'agent (facultatif)</label>
+      <textarea id="consigne" rows="2" placeholder="Ex. : le client a déjà envoyé sa facture hier ; dossier avec pose…"></textarea>
+      <div class="row"><button class="btn btn-main" id="btnAnalyse">Analyser ce mail</button></div>
+    </div>
+
+    <div id="loading" class="loader hidden"><div class="spin"></div><span id="loadingTxt">Lecture du mail…</span></div>
+    <div id="error" class="err hidden"></div>
+
+    <!-- Résultats -->
+    <div id="results" class="hidden">
+      <div id="resUrgence" class="alert alert-red hidden"></div>
+
+      <div class="card">
+        <h2>Nature de la demande</h2>
+        <div class="chips" id="resChips"></div>
+      </div>
+
+      <div class="card">
+        <h2>1. Résumé</h2>
+        <div id="resResume"></div>
+      </div>
+
+      <div class="card" id="cardManquants">
+        <h2>Éléments du dossier</h2>
+        <div id="resRecus"></div>
+        <div id="resManquants"></div>
+        <div id="resPhotos" class="muted" style="margin-top:6px"></div>
+      </div>
+
+      <div class="card attention" id="cardAttention">
+        <h2>Points d'attention (interne)</h2>
+        <ul id="resAttention"></ul>
+      </div>
+
+      <div class="card">
+        <h2>2. Brouillon de réponse</h2>
+        <label for="draftObjet">Objet</label>
+        <input type="text" id="draftObjet">
+        <label for="draftCorps">Corps (modifiable)</label>
+        <textarea id="draftCorps" rows="16"></textarea>
+        <div class="row">
+          <button class="btn btn-main" id="btnReply">↩︎ Répondre avec ce brouillon</button>
+        </div>
+        <div class="row">
+          <button class="btn btn-sec" id="btnNew">✉︎ Nouveau mail avec l'objet</button>
+          <button class="btn btn-sec" id="btnCopy">Copier le texte</button>
+        </div>
+        <p class="muted">Rien n'est envoyé automatiquement : la réponse s'ouvre dans Outlook, tu la relis et tu l'envoies. Complète les champs entre [crochets].</p>
+      </div>
+
+      <div class="card">
+        <h2>Fiche d'intervention SAV (pré-remplissage)</h2>
+        <table class="fiche" id="resFiche"></table>
+        <div class="row"><button class="btn btn-sec" id="btnCopyFiche">Copier la fiche</button></div>
+      </div>
+
+      <p class="muted" id="resMeta" style="text-align:center"></p>
+    </div>
+  </section>
+</main>
+<footer>SAV HMC Assistant · Service Technique · F. Amendola</footer>
+
+<script>
+/* ============================================================
+ *  SAV HMC Assistant — volet Outlook
+ * ============================================================ */
+const $ = id => document.getElementById(id);
+let current = { item: null, data: null, result: null };
+
+/* ---------- Réglages (stockés dans la boîte mail de l'utilisateur) ---------- */
+const Settings = {
+  get(k){ try{ return (Office.context && Office.context.roamingSettings) ? Office.context.roamingSettings.get(k) : localStorage.getItem(k); }catch(e){ return null; } },
+  set(k,v){ try{ if(Office.context && Office.context.roamingSettings) Office.context.roamingSettings.set(k,v); else localStorage.setItem(k,v); }catch(e){} },
+  save(){ return new Promise(res => { try{ if(Office.context && Office.context.roamingSettings) Office.context.roamingSettings.saveAsync(() => res()); else res(); }catch(e){ res(); } }); }
+};
+
+function show(view){
+  $('viewSettings').classList.toggle('hidden', view !== 'settings');
+  $('viewMain').classList.toggle('hidden', view !== 'main');
+}
+
+/* ---------- Détection locale d'urgence (instantanée, sans IA) ---------- */
+const URGENCES = [
+  [/fuite/, "fuite"],
+  [/degats? des eaux|inond/, "dégât des eaux"],
+  [/meubles? (qui )?(tombe|est tombe|a tombe|sont tombes|s.est decroche|s.est effondre|se decroche)/, "meuble qui tombe"],
+  [/chute (de|d.un|du|des) meubles?/, "chute de meuble"],
+  [/nacelle/, "nacelle"],
+  [/monte[- ]?charges?/, "monte-charges"]
+];
+function normaliser(t){ return String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[’']/g,"'"); }
+function detecterUrgence(texte){
+  const n = normaliser(texte);
+  return URGENCES.filter(([re]) => re.test(n)).map(([,lib]) => lib);
+}
+
+/* ---------- Lecture du mail ouvert ---------- */
+function lireBody(item){
+  return new Promise((res, rej) => item.body.getAsync(Office.CoercionType.Text, r => r.status === 'succeeded' ? res(r.value) : rej(r.error)));
+}
+function extensionMime(name){
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return {jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp'}[ext] || null;
+}
+function imagesCandidates(item){
+  return (item.attachments || [])
+    .filter(a => a.attachmentType === 'file')
+    .map(a => ({...a, mime: (/^image\/(jpeg|png|gif|webp)$/.test(a.contentType||'') ? a.contentType : extensionMime(a.name||''))}))
+    .filter(a => a.mime && a.size <= 3700000 && !(a.isInline && a.size < 20000))
+    .sort((a,b) => b.size - a.size)
+    .slice(0, 4);
+}
+function lireImage(item, att){
+  return new Promise(res => {
+    if (!item.getAttachmentContentAsync) return res(null);
+    item.getAttachmentContentAsync(att.id, r => {
+      if (r.status === 'succeeded' && r.value.format === 'base64') res({ mediaType: att.mime, data: r.value.content, name: att.name });
+      else res(null);
+    });
+  });
+}
+
+async function chargerMail(){
+  const item = Office.context.mailbox.item;
+  current = { item, data: null, result: null };
+  $('results').classList.add('hidden'); $('error').classList.add('hidden'); $('localUrgence').classList.add('hidden');
+  if (!item){ $('mailSubject').textContent = 'Aucun mail sélectionné'; $('mailFrom').textContent=''; $('mailPj').textContent=''; return; }
+
+  const from = item.from || item.sender || {};
+  $('mailSubject').textContent = item.subject || '(sans objet)';
+  $('mailFrom').textContent = (from.displayName || '') + (from.emailAddress ? ' <' + from.emailAddress + '>' : '');
+  const pjs = (item.attachments || []).filter(a => !a.isInline);
+  const heic = pjs.filter(a => /\.(heic|heif)$/i.test(a.name||'')).length;
+  $('mailPj').textContent = pjs.length ? `📎 ${pjs.length} pièce(s) jointe(s)` + (heic ? ` — ${heic} photo(s) HEIC non analysable(s)` : '') : 'Aucune pièce jointe';
+
+  try{
+    const body = await lireBody(item);
+    current.data = {
+      subject: item.subject || '', body,
+      fromName: from.displayName || '', fromEmail: from.emailAddress || '',
+      date: item.dateTimeCreated ? new Date(item.dateTimeCreated).toLocaleString('fr-FR') : '',
+      attachments: pjs.map(a => ({ name: a.name, contentType: a.contentType, size: a.size }))
+    };
+    const urg = detecterUrgence(current.data.subject + '\n' + body);
+    if (urg.length){
+      $('localUrgence').textContent = '⚠️ URGENT — mot(s) détecté(s) : ' + urg.join(', ');
+      $('localUrgence').classList.remove('hidden');
+    }
+  }catch(e){ afficherErreur('Impossible de lire le mail : ' + (e && e.message || e)); }
+}
+
+/* ---------- Appel de l'agent ---------- */
+async function appelerAgent(payload){
+  const url = Settings.get('agentUrl'); const code = Settings.get('accessCode');
+  if (!url || !code) throw new Error("Réglages incomplets : clique sur ⚙︎ pour renseigner l'adresse et le code d'accès.");
+  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify({ ...payload, accessCode: code }) });
+  const txt = await r.text();
+  let j; try{ j = JSON.parse(txt); }catch(e){ throw new Error("Réponse inattendue du serveur. Vérifie que l'Apps Script est bien déployé avec l'accès « Tout le monde »."); }
+  if (!j.ok) throw new Error(j.error || 'Erreur inconnue');
+  return j;
+}
+
+const ETAPES = ['Lecture du mail…','Analyse des photos…','Identification de la demande…','Rédaction du brouillon…','Presque fini…'];
+async function analyser(){
+  if (!current.data) await chargerMail();
+  if (!current.data) return;
+  $('btnAnalyse').disabled = true; $('results').classList.add('hidden'); $('error').classList.add('hidden');
+  $('loading').classList.remove('hidden');
+  let i = 0; $('loadingTxt').textContent = ETAPES[0];
+  const timer = setInterval(() => { i = Math.min(i+1, ETAPES.length-1); $('loadingTxt').textContent = ETAPES[i]; }, 5000);
+  try{
+    let images = [];
+    if ($('optPhotos').checked){
+      const cands = imagesCandidates(current.item);
+      images = (await Promise.all(cands.map(a => lireImage(current.item, a)))).filter(Boolean);
+    }
+    const j = await appelerAgent({ action:'analyse', ...current.data, images, consigne: $('consigne').value.trim() });
+    current.result = j.result;
+    afficherResultat(j.result);
+  }catch(e){ afficherErreur(e.message || String(e)); }
+  finally{ clearInterval(timer); $('loading').classList.add('hidden'); $('btnAnalyse').disabled = false; }
+}
+
+/* ---------- Affichage ---------- */
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function liste(arr){ return (arr && arr.length) ? '<ul>' + arr.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>' : ''; }
+
+function afficherResultat(r){
+  const u = r.urgence || {};
+  const local = detecterUrgence((current.data.subject||'') + '\n' + (current.data.body||''));
+  if (u.urgent || local.length){
+    $('resUrgence').textContent = '⚠️ MAIL URGENT' + (u.raison ? ' — ' + u.raison : (local.length ? ' — ' + local.join(', ') : ''));
+    $('resUrgence').classList.remove('hidden');
+  } else $('resUrgence').classList.add('hidden');
+
+  $('resChips').innerHTML =
+    `<span class="chip">${esc(r.categorie || '—')}</span>` +
+    (r.modele_utilise && r.modele_utilise !== 'aucun' ? `<span class="chip grey">Modèle ${esc(r.modele_utilise)}</span>` : '') +
+    (r.confiance ? `<span class="chip grey">Confiance : ${esc(r.confiance)}</span>` : '');
+
+  $('resResume').textContent = r.resume || '';
+
+  $('resRecus').innerHTML = (r.elements_recus && r.elements_recus.length) ? '<div class="ok">✔ Reçu</div>' + liste(r.elements_recus) : '';
+  $('resManquants').innerHTML = (r.elements_manquants && r.elements_manquants.length) ? '<div style="margin-top:6px;font-weight:600;color:#a15c00">✘ Manquant</div>' + liste(r.elements_manquants) : '';
+  $('resPhotos').textContent = r.analyse_photos ? '📷 ' + r.analyse_photos : '';
+  $('cardManquants').classList.toggle('hidden', !(r.elements_recus||[]).length && !(r.elements_manquants||[]).length && !r.analyse_photos);
+
+  $('resAttention').innerHTML = (r.points_attention||[]).map(x => '<li>' + esc(x) + '</li>').join('');
+  $('cardAttention').classList.toggle('hidden', !(r.points_attention||[]).length);
+
+  const b = r.brouillon || {};
+  $('draftObjet').value = b.objet || '';
+  $('draftCorps').value = b.corps || '';
+
+  const f = r.fiche_sav || {};
+  const champs = [['N° fiche SAV','numero_fiche_sav'],['Affaire initiale','affaire_initiale'],['Vendeur initial','vendeur_initial'],['Pose initiale','pose_initiale'],
+                  ['Client','client_civilite_nom'],['Adresse','adresse_prestation'],['Tél.','telephone']];
+  let html = champs.map(([l,k]) => `<tr><td>${l}</td><td>${esc(f[k]) || '<span class="muted">—</span>'}</td></tr>`).join('');
+  html += `<tr><td>Travaux</td><td>${(f.travaux_a_effectuer||[]).length ? liste(f.travaux_a_effectuer) : '<span class="muted">—</span>'}</td></tr>`;
+  $('resFiche').innerHTML = html;
+
+  const us = r._usage || {};
+  $('resMeta').textContent = r._model ? `${r._model} · ${(us.input_tokens||0) + (us.cache_read_input_tokens||0) + (us.cache_creation_input_tokens||0)} jetons lus, ${us.output_tokens||0} écrits` : '';
+
+  $('results').classList.remove('hidden');
+  $('results').scrollIntoView({behavior:'smooth'});
+}
+
+function afficherErreur(msg){ $('error').textContent = msg; $('error').classList.remove('hidden'); }
+
+/* ---------- Actions brouillon ---------- */
+function texteVersHtml(t){
+  return '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">' +
+    esc(t).split(/\n/).map(l => l.trim() === '' ? '<br>' : l.replace(/^[-•]\s+/, '• ') + '<br>').join('') + '</div>';
+}
+function repondre(){
+  const html = texteVersHtml($('draftCorps').value);
+  try{ current.item.displayReplyForm({ htmlBody: html }); }
+  catch(e){ current.item.displayReplyForm(html); }
+}
+function nouveauMail(){
+  const to = current.data && current.data.fromEmail ? [current.data.fromEmail] : [];
+  Office.context.mailbox.displayNewMessageForm({ toRecipients: to, subject: $('draftObjet').value, htmlBody: texteVersHtml($('draftCorps').value) });
+}
+async function copier(texte, btn){
+  let ok = false;
+  try{ await navigator.clipboard.writeText(texte); ok = true; }catch(e){}
+  if (!ok){ const ta = document.createElement('textarea'); ta.value = texte; document.body.appendChild(ta); ta.select(); try{ ok = document.execCommand('copy'); }catch(e){} ta.remove(); }
+  const old = btn.textContent; btn.textContent = ok ? 'Copié ✔' : 'Copie impossible'; setTimeout(() => btn.textContent = old, 1500);
+}
+function texteFiche(){
+  const f = (current.result && current.result.fiche_sav) || {};
+  return [`N° fiche SAV : ${f.numero_fiche_sav||''}`,`Affaire initiale : ${f.affaire_initiale||''}`,`Vendeur initial : ${f.vendeur_initial||''}`,
+          `Pose initiale : ${f.pose_initiale||''}`,`Client : ${f.client_civilite_nom||''}`,`Adresse : ${f.adresse_prestation||''}`,`Tél : ${f.telephone||''}`,
+          'Travaux à effectuer :', ...(f.travaux_a_effectuer||[]).map(t => '- ' + t)].join('\n');
+}
+
+/* ---------- Réglages : écran ---------- */
+async function testerConnexion(){
+  Settings.set('agentUrl', $('setUrl').value.trim()); Settings.set('accessCode', $('setCode').value.trim());
+  $('setMsg').textContent = 'Test en cours…';
+  try{ const j = await appelerAgent({ action:'ping' }); $('setMsg').innerHTML = '<span class="ok">✔ ' + esc(j.message) + '</span>'; }
+  catch(e){ $('setMsg').innerHTML = '<span style="color:var(--rouge)">✘ ' + esc(e.message) + '</span>'; }
+}
+async function enregistrer(){
+  Settings.set('agentUrl', $('setUrl').value.trim()); Settings.set('accessCode', $('setCode').value.trim());
+  await Settings.save();
+  show('main'); chargerMail();
+}
+
+/* ---------- Démarrage ---------- */
+Office.onReady(() => {
+  $('btnSettings').onclick = () => { $('setUrl').value = Settings.get('agentUrl') || ''; $('setCode').value = Settings.get('accessCode') || ''; $('setMsg').textContent=''; show('settings'); };
+  $('btnTest').onclick = testerConnexion;
+  $('btnSave').onclick = enregistrer;
+  $('btnAnalyse').onclick = analyser;
+  $('btnReply').onclick = repondre;
+  $('btnNew').onclick = nouveauMail;
+  $('btnCopy').onclick = e => copier('Objet : ' + $('draftObjet').value + '\n\n' + $('draftCorps').value, e.currentTarget);
+  $('btnCopyFiche').onclick = e => copier(texteFiche(), e.currentTarget);
+
+  if (Office.context && Office.context.mailbox){
+    try{ Office.context.mailbox.addHandlerAsync(Office.EventType.ItemChanged, () => chargerMail()); }catch(e){}
+  }
+  if (!Settings.get('agentUrl') || !Settings.get('accessCode')) { $('btnSettings').click(); }
+  else { show('main'); chargerMail(); }
+});
+</script>
+</body>
+</html>
