@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SAV HMC Assistant</title>
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script src="assets/jspdf.umd.min.js"></script>
 <style>
   :root{
     --vert:#b5c400; --vert-fonce:#5d6600; --vert-clair:#f4f7d9;
@@ -51,6 +52,7 @@
   .err{background:var(--rouge-clair);color:var(--rouge);border-radius:8px;padding:10px;font-size:13px}
   .ok{color:var(--vert-fonce);font-weight:600}
   .hidden{display:none!important}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 8px}
   footer{padding:4px 14px 14px;color:var(--gris);font-size:11px;text-align:center}
 </style>
 </head>
@@ -131,6 +133,7 @@
         <input type="text" id="draftObjet">
         <label for="draftCorps">Corps (modifiable)</label>
         <textarea id="draftCorps" rows="16"></textarea>
+        <label class="check hidden" id="rowJoindre"><input type="checkbox" id="optJoindre"> 📎 Joindre la fiche d'intervention SAV (PDF)</label>
         <div class="row">
           <button class="btn btn-main" id="btnReply">↩︎ Répondre avec ce brouillon</button>
         </div>
@@ -141,10 +144,33 @@
         <p class="muted">Rien n'est envoyé automatiquement : la réponse s'ouvre dans Outlook, tu la relis et tu l'envoies. Complète les champs entre [crochets].</p>
       </div>
 
-      <div class="card">
-        <h2>Fiche d'intervention SAV (pré-remplissage)</h2>
-        <table class="fiche" id="resFiche"></table>
-        <div class="row"><button class="btn btn-sec" id="btnCopyFiche">Copier la fiche</button></div>
+      <div class="card" id="cardFiche">
+        <h2>Fiche d'intervention SAV</h2>
+        <!-- Pas de fiche nécessaire -->
+        <div id="ficheNon" class="hidden">
+          <p class="muted" id="ficheRaisonNon"></p>
+          <button class="btn btn-sec" id="btnFicheForcer">＋ Créer quand même une fiche</button>
+        </div>
+        <!-- Fiche à créer : champs modifiables -->
+        <div id="ficheOui" class="hidden">
+          <p class="muted" id="ficheRaisonOui"></p>
+          <div class="grid2">
+            <div><label for="fNum">N° fiche SAV</label><input type="text" id="fNum"></div>
+            <div><label for="fAffaire">Affaire initiale</label><input type="text" id="fAffaire"></div>
+            <div><label for="fVendeur">Vendeur initial</label><input type="text" id="fVendeur"></div>
+            <div><label for="fPose">Pose initiale</label><input type="text" id="fPose"></div>
+          </div>
+          <label for="fClient">Client (M. / Mme)</label><input type="text" id="fClient">
+          <label for="fAdresse">Adresse de la prestation</label><input type="text" id="fAdresse">
+          <label for="fTel">Téléphone</label><input type="text" id="fTel">
+          <label for="fTravaux">Travaux à effectuer (une ligne par travail)</label>
+          <textarea id="fTravaux" rows="5"></textarea>
+          <div class="row">
+            <button class="btn btn-sec" id="btnPdf">⬇︎ Télécharger le PDF</button>
+            <button class="btn btn-sec" id="btnCopyFiche">Copier le texte</button>
+          </div>
+          <p class="muted" id="pdfMsg"></p>
+        </div>
       </div>
 
       <p class="muted" id="resMeta" style="text-align:center"></p>
@@ -305,12 +331,7 @@ function afficherResultat(r){
   $('draftObjet').value = b.objet || '';
   $('draftCorps').value = b.corps || '';
 
-  const f = r.fiche_sav || {};
-  const champs = [['N° fiche SAV','numero_fiche_sav'],['Affaire initiale','affaire_initiale'],['Vendeur initial','vendeur_initial'],['Pose initiale','pose_initiale'],
-                  ['Client','client_civilite_nom'],['Adresse','adresse_prestation'],['Tél.','telephone']];
-  let html = champs.map(([l,k]) => `<tr><td>${l}</td><td>${esc(f[k]) || '<span class="muted">—</span>'}</td></tr>`).join('');
-  html += `<tr><td>Travaux</td><td>${(f.travaux_a_effectuer||[]).length ? liste(f.travaux_a_effectuer) : '<span class="muted">—</span>'}</td></tr>`;
-  $('resFiche').innerHTML = html;
+  afficherFiche(r.fiche_sav || {});
 
   const us = r._usage || {};
   $('resMeta').textContent = r._model ? `${r._model} · ${(us.input_tokens||0) + (us.cache_read_input_tokens||0) + (us.cache_creation_input_tokens||0)} jetons lus, ${us.output_tokens||0} écrits` : '';
@@ -321,19 +342,173 @@ function afficherResultat(r){
 
 function afficherErreur(msg){ $('error').textContent = msg; $('error').classList.remove('hidden'); }
 
+/* ---------- Fiche d'intervention SAV ---------- */
+// En-tête et pied de page repris du modèle « Fiche d'intervention SAV » (magasin de Lattes).
+// → Adapter ici pour un autre magasin.
+const FICHE_SOCIETE = "SARL UN AMOUR DE CUISINE";
+const FICHE_PIED = [
+  "SoCoo'c Montpellier Lattes - Chemin de Soriech PA Le Soriech, lot. 5 34970 Lattes - FRANCE - Tél : 04 67 27 11 05 - email : magasin@lattes.socooc.com",
+  "Du lundi au vendredi : 10:00 - 12:00 14:00 - 19:00 Le samedi : 09:30 - 19:00",
+  "Siège : SARL UN AMOUR DE CUISINE au capital de 98 484€ - SIRET : 505 261 107 00013 - RCS : Montpellier 505 261 107 - APE : 4759A - N° TVA : FR29505261107",
+  "PAE DE SORIECH 5 CHEMIN DE SORIECH 34970 LATTES - Société indépendante, membre d'un réseau de franchises."
+];
+const FICHE_CHAMPS = { fNum:'numero_fiche_sav', fAffaire:'affaire_initiale', fVendeur:'vendeur_initial', fPose:'pose_initiale',
+                       fClient:'client_civilite_nom', fAdresse:'adresse_prestation', fTel:'telephone' };
+let ficheActive = false;
+
+function afficherFiche(f){
+  Object.entries(FICHE_CHAMPS).forEach(([id,k]) => $(id).value = f[k] || '');
+  $('fTravaux').value = (f.travaux_a_effectuer || []).join('\n');
+  $('pdfMsg').textContent = '';
+  // Ancienne réponse sans "necessaire" : on considère qu'une fiche est utile s'il y a des travaux.
+  const necessaire = (typeof f.necessaire === 'boolean') ? f.necessaire : (f.travaux_a_effectuer || []).length > 0;
+  $('ficheRaisonOui').textContent = f.raison ? '✔ ' + f.raison : '';
+  $('ficheRaisonNon').textContent = 'Pas de fiche nécessaire' + (f.raison ? ' : ' + f.raison : '.');
+  activerFiche(necessaire);
+}
+function activerFiche(on){
+  ficheActive = on;
+  $('ficheOui').classList.toggle('hidden', !on);
+  $('ficheNon').classList.toggle('hidden', on);
+  $('rowJoindre').classList.toggle('hidden', !on);
+  $('optJoindre').checked = on;
+}
+function lireFiche(){
+  const f = {};
+  Object.entries(FICHE_CHAMPS).forEach(([id,k]) => f[k] = $(id).value.trim());
+  f.travaux_a_effectuer = $('fTravaux').value.split('\n').map(s => s.replace(/^[-•]\s*/, '').trim()).filter(Boolean);
+  return f;
+}
+function nomFichierFiche(f){
+  const base = (f.affaire_initiale || f.numero_fiche_sav || f.client_civilite_nom || 'client').replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '');
+  return 'Fiche_intervention_SAV_' + (base || 'client') + '.pdf';
+}
+
+let logoCache = null;
+async function logoDataUrl(){
+  if (logoCache !== null) return logoCache;
+  try{
+    const blob = await (await fetch('assets/logo-socooc.jpg')).blob();
+    logoCache = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(''); fr.readAsDataURL(blob); });
+  }catch(e){ logoCache = ''; }
+  return logoCache;
+}
+
+async function genererPdf(){
+  if (!window.jspdf) throw new Error("Module PDF non chargé (assets/jspdf.umd.min.js manquant sur GitHub ?).");
+  const f = lireFiche();
+  const doc = new window.jspdf.jsPDF({ unit:'mm', format:'a4' });
+  const L = 20, R = 190;
+  // En-tête
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text(FICHE_SOCIETE, L, 22);
+  const logo = await logoDataUrl();
+  if (logo) doc.addImage(logo, 'JPEG', 138, 10, 52, 22);
+  // Titre encadré
+  doc.setFillColor(215,215,215); doc.setDrawColor(60,60,60); doc.rect(58, 40, 94, 14, 'FD');
+  doc.setFontSize(15); doc.text("FICHE D'INTERVENTION SAV", 105, 49.5, { align:'center' });
+  // Bloc gauche
+  doc.setFontSize(10);
+  const champ = (label, val, x, y, w) => {
+    doc.setFont('helvetica','bold'); doc.text(label, x, y);
+    const lx = x + doc.getTextWidth(label) + 2.5;
+    doc.setFont('helvetica','normal');
+    const lignes = doc.splitTextToSize(val || '', w - (lx - x));
+    doc.text(lignes, lx, y);
+    return y + Math.max(1, lignes.length) * 5;
+  };
+  let yl = 66;
+  yl = champ('N° fiche SAV :', f.numero_fiche_sav, L, yl, 90) + 3;
+  yl = champ('Affaire initiale :', f.affaire_initiale, L, yl, 90) + 3;
+  yl = champ('Vendeur initial :', f.vendeur_initial, L, yl, 90) + 3;
+  yl = champ('Pose initiale :', f.pose_initiale, L, yl, 90) + 3;
+  // Bloc droit : adresse de la prestation
+  const xr = 118;
+  doc.setFont('helvetica','bold'); doc.text('Adresse de la prestation :', xr, 64);
+  doc.line(xr, 65, xr + doc.getTextWidth('Adresse de la prestation :'), 65);
+  let yr = 72;
+  yr = champ('M. / MME :', f.client_civilite_nom, xr, yr, R - xr) + 2;
+  yr = champ('Adresse :', f.adresse_prestation, xr, yr, R - xr) + 2;
+  yr = champ('Tél :', f.telephone, xr, yr, R - xr) + 2;
+  // Travaux à effectuer
+  let y = Math.max(yl, yr) + 8;
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.text('Travaux à effectuer :', L, y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+  y += 8;
+  const travaux = f.travaux_a_effectuer.length ? f.travaux_a_effectuer : [];
+  travaux.forEach(t => { const l = doc.splitTextToSize('- ' + t, R - L); doc.text(l, L, y); y += l.length * 5.5; });
+  for (let i = travaux.length; i < 8; i++){ doc.text('-', L, y); y += 5.5; }
+  // Appréciation
+  y = Math.max(y + 6, 170);
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.text('Appréciation du travail effectué :', L, y);
+  doc.setDrawColor(190,190,190);
+  for (let i = 1; i <= 4; i++) doc.line(L, y + i * 9, R, y + i * 9);
+  // Lieu, date, signatures
+  y = Math.max(y + 48, 228);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+  doc.text('Fait à ......................................................, le ..............................', L, y);
+  doc.text('Le poseur agréé,', 32, y + 10); doc.text('Le client,', 128, y + 10);
+  doc.setFont('helvetica','italic'); doc.text('(signature)', 40, y + 15); doc.text('(signature)', 135, y + 15);
+  // Pied de page
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(70,70,70);
+  let yp = 276;
+  FICHE_PIED.forEach(t => { doc.splitTextToSize(t, 175).forEach(l => { doc.text(l, 105, yp, { align:'center' }); yp += 3.6; }); });
+  doc.text('Page : 1 / 1', R, 270, { align:'right' });
+  const dataUri = doc.output('datauristring');
+  return { doc, nom: nomFichierFiche(f), base64: dataUri.split(',')[1] };
+}
+
+async function telechargerPdf(){
+  try{
+    const p = await genererPdf();
+    const blob = p.doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = p.nom; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    $('pdfMsg').textContent = '✔ ' + p.nom + ' téléchargé.';
+    return p;
+  }catch(e){ $('pdfMsg').textContent = '✘ ' + (e.message || e); return null; }
+}
+
 /* ---------- Actions brouillon ---------- */
 function texteVersHtml(t){
   return '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">' +
     esc(t).split(/\n/).map(l => l.trim() === '' ? '<br>' : l.replace(/^[-•]\s+/, '• ') + '<br>').join('') + '</div>';
 }
-function repondre(){
-  const html = texteVersHtml($('draftCorps').value);
-  try{ current.item.displayReplyForm({ htmlBody: html }); }
-  catch(e){ current.item.displayReplyForm(html); }
+function pjSupportee(){
+  try{ return Office.context.requirements.isSetSupported('Mailbox', '1.15'); }catch(e){ return false; }
 }
-function nouveauMail(){
+async function piecesJointes(){
+  if (!(ficheActive && $('optJoindre').checked)) return [];
+  const p = await genererPdf();
+  if (!pjSupportee()){
+    await telechargerPdf();
+    afficherErreur("Cette version d'Outlook ne permet pas de joindre la fiche automatiquement : le PDF vient d'être téléchargé, glisse-le dans la réponse.");
+    return [];
+  }
+  return [{ type: (Office.MailboxEnums && Office.MailboxEnums.AttachmentType && Office.MailboxEnums.AttachmentType.Base64) || 'base64', name: p.nom, base64file: p.base64 }];
+}
+async function repondre(){
+  $('error').classList.add('hidden');
+  const html = texteVersHtml($('draftCorps').value);
+  let attachments = [];
+  try{ attachments = await piecesJointes(); }catch(e){ afficherErreur('Fiche PDF : ' + (e.message || e)); }
+  const opts = attachments.length ? { htmlBody: html, attachments } : { htmlBody: html };
+  try{
+    if (current.item.displayReplyFormAsync){
+      current.item.displayReplyFormAsync(opts, r => {
+        if (r && r.status === 'failed'){ current.item.displayReplyForm({ htmlBody: html }); afficherErreur("La fiche n'a pas pu être jointe : télécharge-la avec le bouton PDF et glisse-la dans la réponse."); }
+      });
+    } else current.item.displayReplyForm(opts);
+  }catch(e){ current.item.displayReplyForm(html); }
+}
+async function nouveauMail(){
+  $('error').classList.add('hidden');
   const to = current.data && current.data.fromEmail ? [current.data.fromEmail] : [];
-  Office.context.mailbox.displayNewMessageForm({ toRecipients: to, subject: $('draftObjet').value, htmlBody: texteVersHtml($('draftCorps').value) });
+  const opts = { toRecipients: to, subject: $('draftObjet').value, htmlBody: texteVersHtml($('draftCorps').value) };
+  let attachments = [];
+  try{ attachments = await piecesJointes(); }catch(e){ afficherErreur('Fiche PDF : ' + (e.message || e)); }
+  try{ Office.context.mailbox.displayNewMessageForm(attachments.length ? { ...opts, attachments } : opts); }
+  catch(e){ Office.context.mailbox.displayNewMessageForm(opts); if (attachments.length){ telechargerPdf(); afficherErreur("La fiche n'a pas pu être jointe : elle vient d'être téléchargée, glisse-la dans le mail."); } }
 }
 async function copier(texte, btn){
   let ok = false;
@@ -342,7 +517,7 @@ async function copier(texte, btn){
   const old = btn.textContent; btn.textContent = ok ? 'Copié ✔' : 'Copie impossible'; setTimeout(() => btn.textContent = old, 1500);
 }
 function texteFiche(){
-  const f = (current.result && current.result.fiche_sav) || {};
+  const f = lireFiche();
   return [`N° fiche SAV : ${f.numero_fiche_sav||''}`,`Affaire initiale : ${f.affaire_initiale||''}`,`Vendeur initial : ${f.vendeur_initial||''}`,
           `Pose initiale : ${f.pose_initiale||''}`,`Client : ${f.client_civilite_nom||''}`,`Adresse : ${f.adresse_prestation||''}`,`Tél : ${f.telephone||''}`,
           'Travaux à effectuer :', ...(f.travaux_a_effectuer||[]).map(t => '- ' + t)].join('\n');
@@ -371,6 +546,8 @@ Office.onReady(() => {
   $('btnNew').onclick = nouveauMail;
   $('btnCopy').onclick = e => copier('Objet : ' + $('draftObjet').value + '\n\n' + $('draftCorps').value, e.currentTarget);
   $('btnCopyFiche').onclick = e => copier(texteFiche(), e.currentTarget);
+  $('btnPdf').onclick = telechargerPdf;
+  $('btnFicheForcer').onclick = () => activerFiche(true);
 
   if (Office.context && Office.context.mailbox){
     try{ Office.context.mailbox.addHandlerAsync(Office.EventType.ItemChanged, () => chargerMail()); }catch(e){}
