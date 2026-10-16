@@ -105,6 +105,8 @@ function doPost(e) {
 
     if (req.action === 'ping') return json_({ ok: true, message: 'Connexion OK' });
 
+    if (req.action === 'reformuler') return json_({ ok: true, result: reformulerReponse_(req) });
+
     const result = analyserMail_(req);
     return json_({ ok: true, result: result });
   } catch (err) {
@@ -185,6 +187,76 @@ function analyserMail_(req) {
   parsed._usage = data.usage;
   parsed._model = model;
   return parsed;
+}
+
+/* ============================================================
+ * 2 bis. REFORMULATION RAPIDE DU BROUILLON (action 'reformuler')
+ * Pas de ré-analyse, pas de photos : on réécrit seulement la réponse
+ * selon la consigne du conseiller (qui prime sur les règles de style).
+ * ============================================================ */
+
+function reformulerReponse_(req) {
+  const props = PropertiesService.getScriptProperties();
+  const apiKey = props.getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('Clé API absente : ajoute ANTHROPIC_API_KEY dans les propriétés du script.');
+  const model = props.getProperty('MODEL') || DEFAULT_MODEL;
+  const instruction = String(req.instruction || '').trim();
+  if (!instruction) throw new Error('Indique une instruction pour reformuler la réponse.');
+
+  let body = couperHistorique_(String(req.body || ''));
+  if (body.length > 8000) body = body.slice(0, 8000) + '\n[… mail tronqué …]';
+  const signataire = String(req.signataire || '').trim();
+
+  const systeme =
+    'Tu es l\'assistant du service après-vente des cuisines SoCoo\'c (HMC). Tu réécris un brouillon de réponse ' +
+    'à un client en suivant l\'instruction du conseiller.\n' +
+    'Règles par défaut : français naturel et professionnel, ton des exemples ci-dessous, pas de tirets cadratins, ' +
+    'pas de gras ni de markdown, garder la formule de politesse et la signature (prénom, « Chargée de Clientèle », téléphone si présent), ' +
+    'garder les champs entre [crochets] qui restent à compléter, ne rien inventer (dates, références, engagements).\n' +
+    'IMPORTANT : l\'instruction du conseiller PRIME sur ces règles par défaut et sur les exemples ' +
+    '(ex. « tutoie le client » → tutoiement partout, y compris la formule de politesse ; « plus court » → réduire nettement).\n' +
+    'Réponds UNIQUEMENT avec un objet JSON : {"objet": "...", "corps": "..."}.' +
+    (EXEMPLES_STYLE.trim() ? '\n\n# EXEMPLES DE STYLE DE L\'ÉQUIPE\n' + EXEMPLES_STYLE : '');
+
+  const texte =
+    'Mail du client (contexte) :\n' +
+    'Expéditeur : ' + (req.fromName || '') + ' <' + (req.fromEmail || '') + '>\n' +
+    'Objet : ' + (req.subject || '') + '\n' +
+    '----- CORPS DU MAIL -----\n' + body + '\n----- FIN DU MAIL -----\n\n' +
+    'Conseiller(e) qui signe : ' + (signataire || '[PRÉNOM]') + '\n' +
+    (req.telephone ? 'Téléphone direct : ' + req.telephone + '\n' : '') +
+    '\n----- BROUILLON ACTUEL -----\nObjet : ' + (req.draftObjet || '') + '\n\n' + String(req.draftCorps || '') +
+    '\n----- FIN DU BROUILLON -----\n\n' +
+    'INSTRUCTION DU CONSEILLER : ' + instruction + '\n\nRéponds uniquement avec le JSON {"objet","corps"}.';
+
+  const payload = {
+    model: model,
+    max_tokens: 1500,
+    system: [{ type: 'text', text: systeme, cache_control: { type: 'ephemeral' } }],
+    messages: [{ role: 'user', content: texte }]
+  };
+  if (/sonnet-5|opus-5/.test(model)) {
+    payload.output_config = { effort: 'low' };
+    payload.thinking = { type: 'between_tools' };
+  }
+  let rep = appelerClaude_(apiKey, payload);
+  if (rep.code === 400 && (payload.output_config || payload.thinking)) {
+    delete payload.output_config; delete payload.thinking;
+    rep = appelerClaude_(apiKey, payload);
+  }
+  const data = rep.data;
+  if (rep.code !== 200) {
+    const msg = (data && data.error && data.error.message) || rep.raw;
+    throw new Error('Erreur API Claude (' + rep.code + ') : ' + msg);
+  }
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+  const parsed = extraireJson_(text);
+  return {
+    objet: String(parsed.objet || req.draftObjet || ''),
+    corps: nettoyerStyle_(parsed.corps || ''),
+    _usage: data.usage,
+    _model: model
+  };
 }
 
 function appelerClaude_(apiKey, payload) {
