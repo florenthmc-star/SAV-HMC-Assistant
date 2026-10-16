@@ -53,6 +53,11 @@
   .ok{color:var(--vert-fonce);font-weight:600}
   .hidden{display:none!important}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 8px}
+  .reform{margin-top:10px;padding:10px;border:1px dashed var(--bord);border-radius:8px;background:var(--fond)}
+  .reform label{margin-top:0}
+  .reform .chips{margin-bottom:6px}
+  .chip-btn{border:0;cursor:pointer;font-family:inherit}
+  .chip-btn:hover{filter:brightness(.95)}
   footer{padding:4px 14px 14px;color:var(--gris);font-size:11px;text-align:center}
 </style>
 </head>
@@ -137,6 +142,21 @@
         <input type="text" id="draftObjet">
         <label for="draftCorps">Corps (modifiable)</label>
         <textarea id="draftCorps" rows="16"></textarea>
+        <div class="reform">
+          <label for="instruction">✏️ Instructions pour Claude</label>
+          <div class="chips" id="quickChips">
+            <button type="button" class="chip chip-btn" data-instr="Tutoie le client (tutoiement partout, y compris la formule de politesse).">Tutoyer</button>
+            <button type="button" class="chip chip-btn" data-instr="Vouvoie le client.">Vouvoyer</button>
+            <button type="button" class="chip chip-btn" data-instr="Rends la réponse plus courte et plus directe.">Plus court</button>
+            <button type="button" class="chip chip-btn" data-instr="Rends la réponse plus formelle.">Plus formel</button>
+            <button type="button" class="chip chip-btn" data-instr="Rends la réponse plus chaleureuse et empathique.">Plus chaleureux</button>
+          </div>
+          <textarea id="instruction" rows="2" placeholder="Ex. : tutoie le client, plus court, propose un RDV mardi matin…"></textarea>
+          <div class="row">
+            <button class="btn btn-sec" id="btnRegen">🔄 Régénérer la réponse</button>
+          </div>
+          <div class="muted hidden" id="regenMsg"></div>
+        </div>
         <label class="check hidden" id="rowJoindre"><input type="checkbox" id="optJoindre"> 📎 Joindre la fiche d'intervention SAV (PDF)</label>
         <div class="row">
           <button class="btn btn-main" id="btnReply">↩︎ Répondre avec ce brouillon</button>
@@ -324,6 +344,28 @@ async function analyser(){
     afficherResultat(j.result);
   }catch(e){ afficherErreur(e.message || String(e)); }
   finally{ clearInterval(timer); $('loading').classList.add('hidden'); $('btnAnalyse').disabled = false; }
+}
+
+/* ---------- Reformulation du brouillon ---------- */
+async function regenerer(instr){
+  const instruction = String(instr ?? $('instruction').value).trim();
+  if (!instruction){ $('instruction').focus(); return; }
+  if (!current.data){ afficherErreur("Analyse d'abord le mail."); return; }
+  const btn = $('btnRegen'), msg = $('regenMsg'), chips = document.querySelectorAll('.chip-btn');
+  btn.disabled = true; chips.forEach(c => c.disabled = true);
+  const label = btn.textContent; btn.textContent = '⏳ Réécriture…';
+  msg.classList.add('hidden'); $('error').classList.add('hidden');
+  try{
+    const d = current.data;
+    const j = await appelerAgent({ action:'reformuler', subject:d.subject, fromName:d.fromName, fromEmail:d.fromEmail, body:d.body,
+      draftObjet: $('draftObjet').value, draftCorps: $('draftCorps').value, instruction,
+      signataire: Settings.get('prenom') || '', telephone: Settings.get('telephone') || '' });
+    const r = j.result || {};
+    if (r.corps){ current.ancienCorps = $('draftCorps').value; $('draftCorps').value = r.corps; }
+    if (r.objet) $('draftObjet').value = r.objet;
+    msg.textContent = '✓ Réponse mise à jour : « ' + instruction + ' »'; msg.classList.remove('hidden');
+  }catch(e){ afficherErreur(e.message || String(e)); }
+  finally{ btn.disabled = false; chips.forEach(c => c.disabled = false); btn.textContent = label; }
 }
 
 /* ---------- Affichage ---------- */
@@ -570,6 +612,8 @@ Office.onReady(() => {
   $('btnSave').onclick = enregistrer;
   $('btnAnalyse').onclick = analyser;
   $('btnReply').onclick = repondre;
+  $('btnRegen').onclick = () => regenerer();
+  document.querySelectorAll('.chip-btn').forEach(c => c.onclick = () => regenerer(c.dataset.instr));
   $('btnNew').onclick = nouveauMail;
   $('btnCopy').onclick = e => copier('Objet : ' + $('draftObjet').value + '\n\n' + $('draftCorps').value, e.currentTarget);
   $('btnCopyFiche').onclick = e => copier(texteFiche(), e.currentTarget);
