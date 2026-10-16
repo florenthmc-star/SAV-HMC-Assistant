@@ -72,6 +72,10 @@
       <input type="text" id="setUrl" placeholder="https://script.google.com/macros/s/.../exec">
       <label for="setCode">Code d'accès</label>
       <input type="password" id="setCode" placeholder="••••••">
+      <label for="setPrenom">Ton prénom (signature des mails)</label>
+      <input type="text" id="setPrenom" placeholder="Ex. : Claudia">
+      <label for="setTel">Ton téléphone direct (facultatif)</label>
+      <input type="text" id="setTel" placeholder="Ex. : 04 67 00 00 00">
       <div class="row">
         <button class="btn btn-sec" id="btnTest">Tester la connexion</button>
         <button class="btn btn-main" id="btnSave" style="width:auto">Enregistrer</button>
@@ -225,7 +229,7 @@ function imagesCandidates(item){
   return (item.attachments || [])
     .filter(a => a.attachmentType === 'file')
     .map(a => ({...a, mime: (/^image\/(jpeg|png|gif|webp)$/.test(a.contentType||'') ? a.contentType : extensionMime(a.name||''))}))
-    .filter(a => a.mime && a.size <= 3700000 && !(a.isInline && a.size < 20000))
+    .filter(a => a.mime && a.size <= 15000000 && !(a.isInline && a.size < 20000))
     .sort((a,b) => b.size - a.size)
     .slice(0, 4);
 }
@@ -236,6 +240,24 @@ function lireImage(item, att){
       if (r.status === 'succeeded' && r.value.format === 'base64') res({ mediaType: att.mime, data: r.value.content, name: att.name });
       else res(null);
     });
+  });
+}
+
+// Réduit les photos (max 1280 px, JPEG) : envoi plus léger et analyse plus rapide.
+function reduireImage(img){
+  return new Promise(res => {
+    try{
+      const el = new Image();
+      el.onload = () => {
+        const max = 1280, k = Math.min(1, max / Math.max(el.width, el.height));
+        if (k === 1 && img.data.length < 700000) return res(img);
+        const c = document.createElement('canvas'); c.width = Math.round(el.width * k); c.height = Math.round(el.height * k);
+        c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
+        res({ mediaType: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.82).split(',')[1], name: img.name });
+      };
+      el.onerror = () => res(img);
+      el.src = 'data:' + img.mediaType + ';base64,' + img.data;
+    }catch(e){ res(img); }
   });
 }
 
@@ -279,22 +301,26 @@ async function appelerAgent(payload){
   return j;
 }
 
-const ETAPES = ['Lecture du mail…','Analyse des photos…','Identification de la demande…','Rédaction du brouillon…','Presque fini…'];
+const ETAPES = ['Lecture du mail…','Analyse des photos…','Rédaction du brouillon…','Presque fini…'];
 async function analyser(){
   if (!current.data) await chargerMail();
   if (!current.data) return;
   $('btnAnalyse').disabled = true; $('results').classList.add('hidden'); $('error').classList.add('hidden');
   $('loading').classList.remove('hidden');
   let i = 0; $('loadingTxt').textContent = ETAPES[0];
-  const timer = setInterval(() => { i = Math.min(i+1, ETAPES.length-1); $('loadingTxt').textContent = ETAPES[i]; }, 5000);
+  const timer = setInterval(() => { i = Math.min(i+1, ETAPES.length-1); $('loadingTxt').textContent = ETAPES[i]; }, 3000);
   try{
     let images = [];
     if ($('optPhotos').checked){
       const cands = imagesCandidates(current.item);
       images = (await Promise.all(cands.map(a => lireImage(current.item, a)))).filter(Boolean);
+      images = (await Promise.all(images.map(reduireImage))).filter(Boolean);
     }
-    const j = await appelerAgent({ action:'analyse', ...current.data, images, consigne: $('consigne').value.trim() });
+    const t0 = Date.now();
+    const j = await appelerAgent({ action:'analyse', ...current.data, images, consigne: $('consigne').value.trim(),
+                                   signataire: Settings.get('prenom') || '', telephone: Settings.get('telephone') || '' });
     current.result = j.result;
+    current.duree = Math.round((Date.now() - t0) / 100) / 10;
     afficherResultat(j.result);
   }catch(e){ afficherErreur(e.message || String(e)); }
   finally{ clearInterval(timer); $('loading').classList.add('hidden'); $('btnAnalyse').disabled = false; }
@@ -334,7 +360,7 @@ function afficherResultat(r){
   afficherFiche(r.fiche_sav || {});
 
   const us = r._usage || {};
-  $('resMeta').textContent = r._model ? `${r._model} · ${(us.input_tokens||0) + (us.cache_read_input_tokens||0) + (us.cache_creation_input_tokens||0)} jetons lus, ${us.output_tokens||0} écrits` : '';
+  $('resMeta').textContent = r._model ? `${r._model} · analysé en ${current.duree || '?'} s · ${(us.input_tokens||0) + (us.cache_read_input_tokens||0) + (us.cache_creation_input_tokens||0)} jetons lus, ${us.output_tokens||0} écrits` : '';
 
   $('results').classList.remove('hidden');
   $('results').scrollIntoView({behavior:'smooth'});
@@ -532,13 +558,14 @@ async function testerConnexion(){
 }
 async function enregistrer(){
   Settings.set('agentUrl', $('setUrl').value.trim()); Settings.set('accessCode', $('setCode').value.trim());
+  Settings.set('prenom', $('setPrenom').value.trim()); Settings.set('telephone', $('setTel').value.trim());
   await Settings.save();
   show('main'); chargerMail();
 }
 
 /* ---------- Démarrage ---------- */
 Office.onReady(() => {
-  $('btnSettings').onclick = () => { $('setUrl').value = Settings.get('agentUrl') || ''; $('setCode').value = Settings.get('accessCode') || ''; $('setMsg').textContent=''; show('settings'); };
+  $('btnSettings').onclick = () => { $('setUrl').value = Settings.get('agentUrl') || ''; $('setCode').value = Settings.get('accessCode') || ''; $('setPrenom').value = Settings.get('prenom') || ''; $('setTel').value = Settings.get('telephone') || ''; $('setMsg').textContent=''; show('settings'); };
   $('btnTest').onclick = testerConnexion;
   $('btnSave').onclick = enregistrer;
   $('btnAnalyse').onclick = analyser;
@@ -552,7 +579,7 @@ Office.onReady(() => {
   if (Office.context && Office.context.mailbox){
     try{ Office.context.mailbox.addHandlerAsync(Office.EventType.ItemChanged, () => chargerMail()); }catch(e){}
   }
-  if (!Settings.get('agentUrl') || !Settings.get('accessCode')) { $('btnSettings').click(); }
+  if (!Settings.get('agentUrl') || !Settings.get('accessCode') || !Settings.get('prenom')) { $('btnSettings').click(); }
   else { show('main'); chargerMail(); }
 });
 </script>
