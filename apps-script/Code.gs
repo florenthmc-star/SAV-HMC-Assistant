@@ -18,7 +18,9 @@
 
 const DEFAULT_MODEL = 'claude-sonnet-5-5';             // modèle retenu (~4 cts/mail)
 const MODELE_SUPERIEUR = 'claude-sonnet-5-5';         // gardé pour compatibilité (comparaison)
-const MAX_BODY_CHARS = 20000;   // on coupe les très longs fils de mails
+const MAX_BODY_CHARS = 30000;   // on coupe les très longs fils de mails (message + historique)
+const MAX_HISTORIQUE_CHARS = 15000; // historique du fil conservé sous le dernier message
+const MAX_DOCUMENTS = 3;        // documents ajoutés à la main par le conseiller avant l'analyse
 const MAX_IMAGES = 4;
 
 /* Exemples de VRAIES réponses écrites par l'équipe SAV (copier-coller entre les accents graves).
@@ -139,7 +141,10 @@ function analyserMail_(req) {
     'Expéditeur : ' + (req.fromName || '') + ' <' + (req.fromEmail || '') + '>\n' +
     'Objet : ' + (req.subject || '') + '\n' +
     'Pièces jointes :\n' + pj + '\n\n' +
-    'Photos analysables jointes à ce message : ' + ((req.images || []).length) + '\n\n' +
+    'Photos analysables jointes à ce message : ' + ((req.images || []).length) + '\n' +
+    'Documents ajoutés par le conseiller : ' + ((req.documents || []).map(d => d.name).join(', ') || 'aucun') + '\n\n' +
+    'Le corps ci-dessous contient le dernier message PUIS l\'historique du fil (échanges précédents, du plus récent au plus ancien). ' +
+    'Tiens compte de tout l\'historique (ce qui a déjà été demandé, reçu, promis ou commandé) pour ne pas redemander un élément déjà fourni.\n\n' +
     '----- CORPS DU MAIL -----\n' + body + '\n----- FIN DU MAIL -----\n\n' +
     'Conseiller(e) qui signe la réponse : ' + (signataire || '[PRÉNOM]') + '\n' +
     (req.telephone ? 'Téléphone direct du conseiller : ' + req.telephone + '\n' : '') +
@@ -150,9 +155,24 @@ function analyserMail_(req) {
   (req.images || []).slice(0, MAX_IMAGES).forEach(img => {
     content.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } });
   });
+  // Documents ajoutés par le conseiller avant l'analyse (BDC, devis, photo, note…)
+  (req.documents || []).slice(0, MAX_DOCUMENTS).forEach(d => {
+    const nom = String(d.name || 'document');
+    if (d.mediaType === 'application/pdf') {
+      content.push({ type: 'document', title: nom, source: { type: 'base64', media_type: 'application/pdf', data: d.data } });
+    } else if (/^image\/(jpeg|png|gif|webp)$/.test(d.mediaType || '')) {
+      content.push({ type: 'text', text: 'Document ajouté par le conseiller (image) : ' + nom });
+      content.push({ type: 'image', source: { type: 'base64', media_type: d.mediaType, data: d.data } });
+    } else if (d.text) {
+      content.push({ type: 'text', text: '----- DOCUMENT AJOUTÉ PAR LE CONSEILLER : ' + nom + ' -----\n' +
+        String(d.text).slice(0, 20000) + '\n----- FIN DU DOCUMENT -----' });
+    }
+  });
   content.push({ type: 'text', text: texte });
 
-  const systeme = SYSTEM_PROMPT + (EXEMPLES_STYLE.trim()
+  const systeme = SYSTEM_PROMPT +
+    (typeof BASE_CONNAISSANCES !== 'undefined' ? '\n\n' + BASE_CONNAISSANCES : '') +
+    (EXEMPLES_STYLE.trim()
     ? '\n\n# EXEMPLES DE VRAIES RÉPONSES DE L\'ÉQUIPE (imite ce ton, cette longueur, ces tournures)\n' + EXEMPLES_STYLE
     : '');
 
@@ -204,7 +224,7 @@ function reformulerReponse_(req) {
   if (!instruction) throw new Error('Indique une instruction pour reformuler la réponse.');
 
   let body = couperHistorique_(String(req.body || ''));
-  if (body.length > 8000) body = body.slice(0, 8000) + '\n[… mail tronqué …]';
+  if (body.length > 12000) body = body.slice(0, 12000) + '\n[… mail tronqué …]';
   const signataire = String(req.signataire || '').trim();
 
   const systeme =
@@ -272,15 +292,18 @@ function appelerClaude_(apiKey, payload) {
   return { code: res.getResponseCode(), data: data, raw: raw };
 }
 
-// Supprime l'historique cité sous le dernier message (« De : … Envoyé : … », « Le … a écrit : »)
-// → moins de texte à lire = réponse plus rapide. On garde le début du fil si le mail est court.
+// Sépare le dernier message de l'historique cité (« De : … Envoyé : … », « Le … a écrit : »)
+// et garde jusqu'à MAX_HISTORIQUE_CHARS de cet historique (les échanges les plus récents d'abord).
+// Avant : seuls 3 000 caractères étaient gardés → l'agent « oubliait » le début du fil.
 function couperHistorique_(body) {
+  body = String(body || '').replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
   const marqueurs = [/\n\s*-{2,}\s*Message d'origine\s*-{2,}/i, /\n\s*-{2,}\s*Original Message\s*-{2,}/i,
                      /\n\s*De\s*:.*\n\s*Envoy[ée]\s*:/i, /\n\s*From\s*:.*\n\s*Sent\s*:/i, /\n\s*Le .{5,80} a écrit\s*:/i];
   let cut = body.length;
   marqueurs.forEach(re => { const m = body.match(re); if (m && m.index > 200 && m.index < cut) cut = m.index; });
   if (cut === body.length) return body;
-  return body.slice(0, cut) + '\n\n[Historique du fil :]\n' + body.slice(cut, cut + 3000) + (body.length > cut + 3000 ? '\n[…]' : '');
+  return body.slice(0, cut) + '\n\n[Historique du fil (messages précédents) :]\n' + body.slice(cut, cut + MAX_HISTORIQUE_CHARS) +
+    (body.length > cut + MAX_HISTORIQUE_CHARS ? '\n[… historique plus ancien tronqué …]' : '');
 }
 
 // Derniers garde-fous anti « style IA » sur le brouillon.

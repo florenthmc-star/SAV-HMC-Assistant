@@ -39,6 +39,9 @@
   .alert{border-radius:10px;padding:10px 12px;margin-bottom:10px;font-weight:600}
   .alert-red{background:var(--rouge-clair);color:var(--rouge);border:1px solid #f3b4ae}
   .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .doc-list{list-style:none;padding:0;margin:4px 0 0}
+  .doc-list li{display:flex;justify-content:space-between;align-items:center;gap:6px;font-size:12.5px;padding:3px 0;border-bottom:1px solid var(--bord)}
+  .doc-list button{background:none;border:none;color:var(--gris);cursor:pointer;font-size:14px}
   .chip{background:var(--vert-clair);color:var(--vert-fonce);border-radius:999px;padding:3px 10px;font-size:12.5px;font-weight:600}
   .chip.grey{background:var(--fond);color:var(--gris)}
   ul{margin:4px 0 0;padding-left:18px}
@@ -102,6 +105,10 @@
 
     <div class="card">
       <label class="check"><input type="checkbox" id="optPhotos" checked> Analyser aussi les photos jointes</label>
+      <label for="docInput">Ajouter un document avant l'analyse (facultatif)</label>
+      <input type="file" id="docInput" accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt,application/pdf,image/*,text/plain" multiple>
+      <div class="muted">BDC, devis, photo, note… PDF 10 Mo max, photo 15 Mo max, 3 documents max.</div>
+      <ul class="doc-list" id="docList"></ul>
       <label for="consigne">Consigne pour l'agent (facultatif)</label>
       <textarea id="consigne" rows="2" placeholder="Ex. : le client a déjà envoyé sa facture hier ; dossier avec pose…"></textarea>
       <div class="row"><button class="btn btn-main" id="btnAnalyse">Analyser ce mail</button></div>
@@ -209,6 +216,7 @@
  * ============================================================ */
 const $ = id => document.getElementById(id);
 let current = { item: null, data: null, result: null };
+let documentsAjoutes = [];   // documents choisis par le conseiller : { name, mediaType, data | text }
 
 /* ---------- Réglages (stockés dans la boîte mail de l'utilisateur) ---------- */
 const Settings = {
@@ -281,9 +289,50 @@ function reduireImage(img){
   });
 }
 
+/* ---------- Documents ajoutés avant l'analyse ---------- */
+const MAX_DOCS = 3, MAX_PDF = 10 * 1024 * 1024, MAX_IMG = 15000000, MAX_TXT = 1024 * 1024;
+function lireFichier(file, enTexte){
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(enTexte ? fr.result : String(fr.result).split(',')[1]);
+    fr.onerror = () => rej(fr.error);
+    enTexte ? fr.readAsText(file) : fr.readAsDataURL(file);
+  });
+}
+async function ajouterDocuments(files){
+  $('error').classList.add('hidden');
+  const refus = [];
+  for (const f of Array.from(files || [])){
+    if (documentsAjoutes.length >= MAX_DOCS){ refus.push(f.name + ' (3 documents max)'); continue; }
+    const nom = f.name || 'document', ext = (nom.split('.').pop() || '').toLowerCase();
+    const mime = f.type || (ext === 'pdf' ? 'application/pdf' : ext === 'txt' ? 'text/plain' : extensionMime(nom));
+    try{
+      if (mime === 'application/pdf'){
+        if (f.size > MAX_PDF){ refus.push(nom + ' (PDF > 10 Mo)'); continue; }
+        documentsAjoutes.push({ name: nom, mediaType: 'application/pdf', data: await lireFichier(f) });
+      } else if (/^image\/(jpeg|png|gif|webp)$/.test(mime || '')){
+        if (f.size > MAX_IMG){ refus.push(nom + ' (photo > 15 Mo)'); continue; }
+        const img = await reduireImage({ mediaType: mime, data: await lireFichier(f), name: nom });
+        documentsAjoutes.push({ name: nom, mediaType: img.mediaType, data: img.data });
+      } else if (mime === 'text/plain'){
+        if (f.size > MAX_TXT){ refus.push(nom + ' (texte > 1 Mo)'); continue; }
+        documentsAjoutes.push({ name: nom, mediaType: 'text/plain', text: await lireFichier(f, true) });
+      } else refus.push(nom + ' (format non pris en charge : PDF, JPG, PNG, GIF, WEBP ou TXT)');
+    }catch(e){ refus.push(nom + ' (lecture impossible)'); }
+  }
+  afficherDocuments();
+  if (refus.length) afficherErreur('Document(s) non ajouté(s) : ' + refus.join(' ; '));
+}
+function afficherDocuments(){
+  $('docList').innerHTML = documentsAjoutes.map((d, i) =>
+    '<li><span>📄 ' + esc(d.name) + '</span><button type="button" data-i="' + i + '" title="Retirer">✕</button></li>').join('');
+  $('docList').querySelectorAll('button').forEach(b => b.onclick = () => { documentsAjoutes.splice(+b.dataset.i, 1); afficherDocuments(); });
+}
+
 async function chargerMail(){
   const item = Office.context.mailbox.item;
   current = { item, data: null, result: null };
+  documentsAjoutes = []; if ($('docList')) afficherDocuments();
   $('results').classList.add('hidden'); $('error').classList.add('hidden'); $('localUrgence').classList.add('hidden');
   if (!item){ $('mailSubject').textContent = 'Aucun mail sélectionné'; $('mailFrom').textContent=''; $('mailPj').textContent=''; return; }
 
@@ -337,7 +386,7 @@ async function analyser(){
       images = (await Promise.all(images.map(reduireImage))).filter(Boolean);
     }
     const t0 = Date.now();
-    const j = await appelerAgent({ action:'analyse', ...current.data, images, consigne: $('consigne').value.trim(),
+    const j = await appelerAgent({ action:'analyse', ...current.data, images, documents: documentsAjoutes, consigne: $('consigne').value.trim(),
                                    signataire: Settings.get('prenom') || '', telephone: Settings.get('telephone') || '' });
     current.result = j.result;
     current.duree = Math.round((Date.now() - t0) / 100) / 10;
@@ -611,6 +660,7 @@ Office.onReady(() => {
   $('btnTest').onclick = testerConnexion;
   $('btnSave').onclick = enregistrer;
   $('btnAnalyse').onclick = analyser;
+  $('docInput').onchange = async e => { await ajouterDocuments(e.target.files); e.target.value = ''; };
   $('btnReply').onclick = repondre;
   $('btnRegen').onclick = () => regenerer();
   document.querySelectorAll('.chip-btn').forEach(c => c.onclick = () => regenerer(c.dataset.instr));
