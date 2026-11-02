@@ -6,6 +6,7 @@
 <title>SAV HMC Assistant</title>
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
 <script src="assets/jspdf.umd.min.js"></script>
+<script src="assets/msal-browser.min.js"></script>
 <style>
   :root{
     --vert:#b5c400; --vert-fonce:#5d6600; --vert-clair:#f4f7d9;
@@ -84,6 +85,10 @@
       <input type="text" id="setPrenom" placeholder="Ex. : Claudia">
       <label for="setTel">Ton téléphone direct (facultatif)</label>
       <input type="text" id="setTel" placeholder="Ex. : 04 67 00 00 00">
+      <label for="setClientId">ID d'application Azure (client ID) — historique client (facultatif)</label>
+      <input type="text" id="setClientId" placeholder="Ex. : 1a2b3c4d-....">
+      <label for="setShared">Boîte partagée (facultatif, sinon ta boîte)</label>
+      <input type="text" id="setShared" placeholder="Ex. : sav@hmc.fr">
       <div class="row">
         <button class="btn btn-sec" id="btnTest">Tester la connexion</button>
         <button class="btn btn-main" id="btnSave" style="width:auto">Enregistrer</button>
@@ -116,6 +121,7 @@
 
     <div id="loading" class="loader hidden"><div class="spin"></div><span id="loadingTxt">Lecture du mail…</span></div>
     <div id="error" class="err hidden"></div>
+    <div id="histo" class="muted hidden" style="margin:6px 0"></div>
 
     <!-- Résultats -->
     <div id="results" class="hidden">
@@ -333,7 +339,7 @@ async function chargerMail(){
   const item = Office.context.mailbox.item;
   current = { item, data: null, result: null };
   documentsAjoutes = []; if ($('docList')) afficherDocuments();
-  $('results').classList.add('hidden'); $('error').classList.add('hidden'); $('localUrgence').classList.add('hidden');
+  $('results').classList.add('hidden'); $('error').classList.add('hidden'); $('histo').classList.add('hidden'); $('localUrgence').classList.add('hidden');
   if (!item){ $('mailSubject').textContent = 'Aucun mail sélectionné'; $('mailFrom').textContent=''; $('mailPj').textContent=''; return; }
 
   const from = item.from || item.sender || {};
@@ -357,6 +363,74 @@ async function chargerMail(){
       $('localUrgence').classList.remove('hidden');
     }
   }catch(e){ afficherErreur('Impossible de lire le mail : ' + (e && e.message || e)); }
+}
+
+/* ---------- Historique client (Microsoft Graph via Nested App Authentication) ---------- */
+let msalApp = null, msalClientId = null;
+const GRAPH_SCOPES = () => [Settings.get('sharedMailbox') ? 'Mail.Read.Shared' : 'Mail.Read'];
+async function jetonGraph(){
+  const clientId = Settings.get('azureClientId');
+  if (!window.msal || !msal.createNestablePublicClientApplication) throw new Error('bibliothèque MSAL non chargée');
+  if (!(Office.context.requirements && Office.context.requirements.isSetSupported('NestedAppAuth', '1.1')))
+    throw new Error("cette version d'Outlook ne gère pas l'authentification intégrée (NAA)");
+  if (!msalApp || msalClientId !== clientId){
+    msalApp = await msal.createNestablePublicClientApplication({ auth:{ clientId, authority:'https://login.microsoftonline.com/organizations' }, cache:{ cacheLocation:'localStorage' } });
+    msalClientId = clientId;
+  }
+  const req = { scopes: GRAPH_SCOPES() };
+  try{ return (await msalApp.acquireTokenSilent(req)).accessToken; }
+  catch(e){ return (await msalApp.acquireTokenPopup(req)).accessToken; }
+}
+async function graphGet(token, url){
+  const r = await fetch('https://graph.microsoft.com/v1.0' + url, { headers:{ Authorization:'Bearer ' + token, ConsistencyLevel:'eventual', Prefer:'outlook.body-content-type="text"' } });
+  if (!r.ok){ let m = r.status + ''; try{ const j = await r.json(); m += ' ' + ((j.error && j.error.message) || ''); }catch(e){} throw new Error('Graph ' + m); }
+  return r.json();
+}
+function numerosDossier(texte){
+  const re = /\b(?:dossier|commande|cde|cmd|bdc|sav|facture|n°|no|num[ée]ro)\s*[:#°n.]*\s*([A-Z]{0,4}-?\d{4,12})\b/gi;
+  const out = new Set(); let m; while ((m = re.exec(texte)) && out.size < 3) out.add(m[1]);
+  return [...out];
+}
+async function chercherHistorique(){
+  const d = current.data, item = current.item;
+  if (!Settings.get('azureClientId')) return { statut:'Historique client : non configuré', mails:[] };
+  if (!d.fromEmail) return { statut:'Historique client : expéditeur inconnu', mails:[] };
+  const token = await jetonGraph();
+  const shared = (Settings.get('sharedMailbox') || '').trim();
+  const base = shared ? '/users/' + encodeURIComponent(shared) : '/me';
+  const sel = '$select=id,subject,receivedDateTime,sentDateTime,from,toRecipients,bodyPreview,conversationId&$top=25';
+  const termes = ['"' + d.fromEmail.replace(/"/g,'') + '"', ...numerosDossier(d.subject + '\n' + (d.body||'').slice(0, 4000)).map(n => '"' + n + '"')];
+  const requetes = termes.map(t => graphGet(token, base + '/messages?$search=' + encodeURIComponent(t) + '&' + sel).catch(() => ({ value:[] })));
+  // éléments envoyés vers le client (au cas où $search global ne les remonte pas)
+  requetes.push(graphGet(token, base + "/mailFolders/sentitems/messages?$search=" + encodeURIComponent('"to:' + d.fromEmail.replace(/"/g,'') + '"') + '&' + sel).catch(() => ({ value:[] })));
+  const res = await Promise.all(requetes);
+  const conv = item && item.conversationId;
+  const vus = new Map();
+  res.forEach(r => (r.value || []).forEach(m => { if (m.conversationId !== conv && !vus.has(m.id)) vus.set(m.id, m); }));
+  const date = m => new Date(m.receivedDateTime || m.sentDateTime || 0);
+  const mails = [...vus.values()].sort((a,b) => date(b) - date(a)).slice(0, 15);
+  // corps textuels (uniqueBody = sans la citation)
+  await Promise.all(mails.map(async m => {
+    try{ const full = await graphGet(token, base + '/messages/' + encodeURIComponent(m.id) + '?$select=uniqueBody'); m.texte = (full.uniqueBody && full.uniqueBody.content) || m.bodyPreview || ''; }
+    catch(e){ m.texte = m.bodyPreview || ''; }
+  }));
+  let total = 0; const blocs = [];
+  for (const m of mails){
+    const de = m.from && m.from.emailAddress ? (m.from.emailAddress.name || '') + ' <' + m.from.emailAddress.address + '>' : '?';
+    const a = (m.toRecipients || []).map(t => t.emailAddress && t.emailAddress.address).join(', ');
+    let txt = String(m.texte || '').replace(/\s+\n/g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+    const entete = '### ' + date(m).toLocaleString('fr-FR') + ' — De : ' + de + ' — À : ' + a + '\nObjet : ' + (m.subject || '') + '\n';
+    const reste = 12000 - total - entete.length; if (reste < 200) break;
+    if (txt.length > Math.min(reste, 2000)) txt = txt.slice(0, Math.min(reste, 2000)) + '…';
+    blocs.push(entete + txt); total += entete.length + txt.length;
+  }
+  return { statut: '🔎 Historique client : ' + mails.length + ' mail(s) trouvé(s)', mails, texte: blocs.join('\n\n') };
+}
+function afficherHistorique(h){
+  const el = $('histo');
+  const lst = (h.mails || []).map(m => '<li>' + esc(new Date(m.receivedDateTime || m.sentDateTime).toLocaleDateString('fr-FR')) + ' — ' + esc(m.subject || '(sans objet)') + '</li>').join('');
+  el.innerHTML = lst ? '<details><summary>' + esc(h.statut) + '</summary><ul>' + lst + '</ul></details>' : esc(h.statut);
+  el.classList.remove('hidden');
 }
 
 /* ---------- Appel de l'agent ---------- */
@@ -385,8 +459,11 @@ async function analyser(){
       images = (await Promise.all(cands.map(a => lireImage(current.item, a)))).filter(Boolean);
       images = (await Promise.all(images.map(reduireImage))).filter(Boolean);
     }
+    let historiqueClient = '';
+    try{ const h = await chercherHistorique(); afficherHistorique(h); historiqueClient = h.texte || ''; }
+    catch(e){ afficherHistorique({ statut:'Historique client indisponible : ' + (e && e.message || e) }); }
     const t0 = Date.now();
-    const j = await appelerAgent({ action:'analyse', ...current.data, images, documents: documentsAjoutes, consigne: $('consigne').value.trim(),
+    const j = await appelerAgent({ action:'analyse', ...current.data, historiqueClient, images, documents: documentsAjoutes, consigne: $('consigne').value.trim(),
                                    signataire: Settings.get('prenom') || '', telephone: Settings.get('telephone') || '' });
     current.result = j.result;
     current.duree = Math.round((Date.now() - t0) / 100) / 10;
@@ -650,13 +727,14 @@ async function testerConnexion(){
 async function enregistrer(){
   Settings.set('agentUrl', $('setUrl').value.trim()); Settings.set('accessCode', $('setCode').value.trim());
   Settings.set('prenom', $('setPrenom').value.trim()); Settings.set('telephone', $('setTel').value.trim());
+  Settings.set('azureClientId', $('setClientId').value.trim()); Settings.set('sharedMailbox', $('setShared').value.trim());
   await Settings.save();
   show('main'); chargerMail();
 }
 
 /* ---------- Démarrage ---------- */
 Office.onReady(() => {
-  $('btnSettings').onclick = () => { $('setUrl').value = Settings.get('agentUrl') || ''; $('setCode').value = Settings.get('accessCode') || ''; $('setPrenom').value = Settings.get('prenom') || ''; $('setTel').value = Settings.get('telephone') || ''; $('setMsg').textContent=''; show('settings'); };
+  $('btnSettings').onclick = () => { $('setUrl').value = Settings.get('agentUrl') || ''; $('setCode').value = Settings.get('accessCode') || ''; $('setPrenom').value = Settings.get('prenom') || ''; $('setTel').value = Settings.get('telephone') || ''; $('setClientId').value = Settings.get('azureClientId') || ''; $('setShared').value = Settings.get('sharedMailbox') || ''; $('setMsg').textContent=''; show('settings'); };
   $('btnTest').onclick = testerConnexion;
   $('btnSave').onclick = enregistrer;
   $('btnAnalyse').onclick = analyser;
