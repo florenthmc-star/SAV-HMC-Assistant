@@ -146,6 +146,13 @@ function analyserMail_(req) {
     'Le corps ci-dessous contient le dernier message PUIS l\'historique du fil (échanges précédents, du plus récent au plus ancien). ' +
     'Tiens compte de tout l\'historique (ce qui a déjà été demandé, reçu, promis ou commandé) pour ne pas redemander un élément déjà fourni.\n\n' +
     '----- CORPS DU MAIL -----\n' + body + '\n----- FIN DU MAIL -----\n\n' +
+    (req.historiqueClient ?
+      '----- HISTORIQUE CLIENT (autres mails échangés avec ce client, hors fil actuel, du plus récent au plus ancien) -----\n' +
+      String(req.historiqueClient).slice(0, 14000) + '\n----- FIN HISTORIQUE CLIENT -----\n' +
+      'Utilise cet historique : réclamations précédentes, promesses faites, dates, pièces déjà envoyées ou commandées, documents déjà fournis. ' +
+      'Ne redemande pas ce qui a déjà été fourni. Mentionne les échanges passés pertinents (avec leur date) dans "resume" et, s\'il y a lieu, dans "elements_recus" ' +
+      'et "points_attention" (ex. relance, litige récurrent). Ignore les mails sans rapport avec le SAV.\n\n'
+      : '') +
     'Conseiller(e) qui signe la réponse : ' + (signataire || '[PRÉNOM]') + '\n' +
     (req.telephone ? 'Téléphone direct du conseiller : ' + req.telephone + '\n' : '') +
     (req.consigne ? 'Consigne supplémentaire du conseiller : ' + req.consigne + '\n' : '') +
